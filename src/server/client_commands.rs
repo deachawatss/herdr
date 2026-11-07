@@ -28,6 +28,7 @@ const CLIENT_SHELL_METHODS: &[&str] = &[
     "pane.input.set",
     "pane.link.activate",
     "pane.link.resolve",
+    "pane.move",
     "pane.rename",
     "pane.resize",
     "pane.scroll",
@@ -297,6 +298,10 @@ mod tests {
             actual.remove("pane.link.resolve").as_deref(),
             Some("f5e4a3e01453ae7b188f127ce951c12c20e0bebcc17cc364eeb6d1a01fd5bf81")
         );
+        assert_eq!(
+            actual.remove("pane.move").as_deref(),
+            Some("eaed63cf205db2dc043ecce9e1a79cdca7f6e2521b364226bbf3121affadce7c")
+        );
 
         assert_eq!(
             actual, expected,
@@ -371,6 +376,18 @@ mod tests {
                 col: 0,
                 content_revision: None,
                 offset_from_bottom: None,
+            },
+        )));
+        assert!(supports_client_shell_method(&Method::PaneMove(
+            crate::api::schema::PaneMoveParams {
+                pane_id: "w2:p1".into(),
+                destination: crate::api::schema::PaneMoveDestination::Tab {
+                    tab_id: "w1:t1".into(),
+                    target_pane_id: Some("w1:p1".into()),
+                    split: crate::api::schema::SplitDirection::Right,
+                    ratio: None,
+                },
+                focus: true,
             },
         )));
         assert!(!supports_client_shell_method(&Method::Ping(

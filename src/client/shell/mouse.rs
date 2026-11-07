@@ -584,6 +584,69 @@ impl ClientShellState {
             .map(|(_, target)| target)
     }
 
+    fn workspace_pane_drop_method(
+        &self,
+        source_workspace_id: &str,
+        point: (u16, u16),
+    ) -> Option<crate::api::schema::Method> {
+        let snapshot = self.snapshot.as_deref()?;
+        let source_tab_id = &snapshot
+            .workspaces
+            .iter()
+            .find(|workspace| workspace.workspace_id == source_workspace_id)?
+            .active_tab_id;
+        let mut source_panes = snapshot
+            .panes
+            .iter()
+            .filter(|pane| pane.tab_id == *source_tab_id);
+        let source_pane = source_panes.next()?;
+        if source_panes.next().is_some() {
+            return None;
+        }
+        self.pane_drop_method(&source_pane.pane_id, point)
+    }
+
+    fn pane_drop_method(
+        &self,
+        source_pane_id: &str,
+        point: (u16, u16),
+    ) -> Option<crate::api::schema::Method> {
+        use crate::api::schema::{Method, PaneMoveDestination, PaneMoveParams, SplitDirection};
+
+        let target = self
+            .hits
+            .panes
+            .iter()
+            .find(|hit| !hit.popup && super::contains(hit.rect, point))?;
+        let snapshot = self.snapshot.as_deref()?;
+        let target_tab_id = snapshot.focused_tab_id.as_deref()?;
+        let source_pane = snapshot
+            .panes
+            .iter()
+            .find(|pane| pane.pane_id == source_pane_id)?;
+        if source_pane.tab_id == target_tab_id {
+            return None;
+        }
+        let rect = target.rect;
+        let nearer_bottom_than_right = u32::from(point.1 - rect.y) * u32::from(rect.width)
+            > u32::from(point.0 - rect.x) * u32::from(rect.height);
+        let method = Method::PaneMove(PaneMoveParams {
+            pane_id: source_pane.pane_id.clone(),
+            destination: PaneMoveDestination::Tab {
+                tab_id: target_tab_id.to_owned(),
+                target_pane_id: Some(target.pane_id.clone()),
+                split: if nearer_bottom_than_right {
+                    SplitDirection::Down
+                } else {
+                    SplitDirection::Right
+                },
+                ratio: None,
+            },
+            focus: true,
+        });
+        self.supports_endpoint_method(&method).then_some(method)
+    }
+
     fn workspace_move_method(
         &self,
         source_workspace_id: &str,
@@ -1204,6 +1267,7 @@ impl ClientShellState {
                     outcome.repaint = true;
                     return;
                 }
+                Some(ClientChromeDrag::AgentPane { .. }) => return,
                 Some(ClientChromeDrag::Workspace { .. }) => {
                     let target = self.workspace_drop_target_at(point);
                     if let Some(ClientChromeDrag::Workspace {
@@ -1254,11 +1318,25 @@ impl ClientShellState {
                 }
                 return;
             }
+            if let Some(press) = self.agent_press.as_ref() {
+                let delta = mouse
+                    .column
+                    .abs_diff(press.start_column)
+                    .max(mouse.row.abs_diff(press.start_row));
+                if delta >= 1 {
+                    self.chrome_drag = Some(ClientChromeDrag::AgentPane {
+                        pane_id: press.pane_id.clone(),
+                    });
+                    self.agent_press = None;
+                }
+                return;
+            }
         }
         if mouse.kind == MouseEventKind::Up(MouseButton::Left) {
             if let Some(drag) = self.chrome_drag.take() {
                 self.workspace_press = None;
                 self.tab_press = None;
+                self.agent_press = None;
                 match drag {
                     ClientChromeDrag::Tab {
                         tab_id,
@@ -1297,13 +1375,23 @@ impl ClientShellState {
                         source_workspace_id,
                         target,
                     } => {
-                        if let Some((before_workspace_id, _)) = target {
+                        if let Some(method) =
+                            self.workspace_pane_drop_method(&source_workspace_id, point)
+                        {
+                            self.push_endpoint_method(method, outcome);
+                        } else if let Some((before_workspace_id, _)) = target {
                             if let Some(method) = self.workspace_move_method(
                                 &source_workspace_id,
                                 before_workspace_id.as_deref(),
                             ) {
                                 self.push_endpoint_method(method, outcome);
                             }
+                        }
+                        outcome.repaint = true;
+                    }
+                    ClientChromeDrag::AgentPane { pane_id } => {
+                        if let Some(method) = self.pane_drop_method(&pane_id, point) {
+                            self.push_endpoint_method(method, outcome);
                         }
                         outcome.repaint = true;
                     }
@@ -1377,6 +1465,15 @@ impl ClientShellState {
                 self.push_endpoint_method(
                     crate::api::schema::Method::TabFocus(crate::api::schema::TabTarget {
                         tab_id: press.tab_id,
+                    }),
+                    outcome,
+                );
+                return;
+            }
+            if let Some(press) = self.agent_press.take() {
+                self.push_endpoint_method(
+                    crate::api::schema::Method::PaneFocus(crate::api::schema::PaneTarget {
+                        pane_id: press.pane_id,
                     }),
                     outcome,
                 );
@@ -1939,6 +2036,7 @@ impl ClientShellState {
                 let previous_pane_click = self.last_pane_click.take();
                 self.workspace_press = None;
                 self.tab_press = None;
+                self.agent_press = None;
                 self.chrome_drag = None;
                 // The toggle is painted over the agent scrollbar's last cell.
                 if super::contains(self.hits.sidebar_toggle, point) {
@@ -2151,12 +2249,11 @@ impl ClientShellState {
                     .find(|(rect, _)| super::contains(*rect, point))
                     .map(|(_, pane_id)| pane_id.clone());
                 if let Some(pane_id) = agent_pane_id {
-                    self.push_endpoint_method(
-                        crate::api::schema::Method::PaneFocus(crate::api::schema::PaneTarget {
-                            pane_id,
-                        }),
-                        outcome,
-                    );
+                    self.agent_press = Some(ClientAgentPress {
+                        pane_id,
+                        start_column: mouse.column,
+                        start_row: mouse.row,
+                    });
                     return;
                 }
                 let scrollbar_hit = self
