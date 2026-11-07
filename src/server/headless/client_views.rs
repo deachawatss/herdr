@@ -263,6 +263,7 @@ impl HeadlessServer {
                 | Method::PaneResize(_)
                 | Method::PaneScroll(_)
                 | Method::PaneClear(_)
+                | Method::PaneMove(_)
                 | Method::PaneSplit(_)
                 | Method::PaneSwap(_)
                 | Method::PaneZoom(_)
