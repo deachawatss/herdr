@@ -367,6 +367,8 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 # Blank rows between space entries. Set to 1 to restore the previous spacing.
 # row_gap = 0
 # rows = [["state_icon", "workspace"], ["branch", "git_status"]]
+# Prefixes cut from the front of each "/" part of a space name in the sidebar.
+# hide_label_prefixes = ["NWFTH-"]
 
 # Background notification popup delivery
 [ui.toast]

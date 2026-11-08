@@ -263,4 +263,5 @@ mod mouse_selection;
 mod pane_menu_new_workspace;
 mod popup_focus_projection;
 mod sidebar_drop_split;
+mod sidebar_label_prefixes;
 mod startup_overlays;
