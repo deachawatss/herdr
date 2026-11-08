@@ -302,3 +302,19 @@ fn a_click_on_an_agent_row_focuses_its_pane_on_release() {
             if matches!(&request.method, Method::PaneFocus(target) if target.pane_id == "pane_2")
     ));
 }
+
+#[test]
+fn the_local_machine_shows_the_configured_label() {
+    let mut config = Config::default();
+    config.ui.local_machine_label = "Wind-Mac".into();
+    let state = ClientShellState::new(ClientShellConfig::from_config(&config));
+
+    assert_eq!(state.endpoints[0].label, "Wind-Mac");
+}
+
+#[test]
+fn the_local_machine_is_named_local_by_default() {
+    let state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+
+    assert_eq!(state.endpoints[0].label, "Local");
+}

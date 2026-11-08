@@ -958,6 +958,8 @@ pub struct UiConfig {
     pub right_click_passthrough_modifier: RightClickPassthroughModifierConfig,
     /// Force a full host-terminal redraw when the outer terminal regains focus. Default: true.
     pub redraw_on_focus_gained: bool,
+    /// Sidebar name of this machine. Default: Local.
+    pub local_machine_label: String,
     /// Lines to scroll per mouse wheel notch. Default: 3.
     pub mouse_scroll_lines: Option<NonZeroUsize>,
     /// Ask for confirmation before closing a workspace. Default: true.
@@ -1209,6 +1211,7 @@ impl Default for UiConfig {
             host_cursor: HostCursorModeConfig::Auto,
             right_click_passthrough_modifier: RightClickPassthroughModifierConfig::default(),
             redraw_on_focus_gained: true,
+            local_machine_label: "Local".into(),
             mouse_scroll_lines: None,
             confirm_close: true,
             prompt_new_tab_name: true,
@@ -1830,6 +1833,14 @@ right_click_passthrough_modifier = "{value}"
                 "value {value:?} should be rejected"
             );
         }
+    }
+
+    #[test]
+    fn local_machine_label_defaults_to_local_and_parses() {
+        assert_eq!(Config::default().ui.local_machine_label, "Local");
+
+        let config: Config = toml::from_str("[ui]\nlocal_machine_label = \"Wind-Mac\"\n").unwrap();
+        assert_eq!(config.ui.local_machine_label, "Wind-Mac");
     }
 
     #[test]
