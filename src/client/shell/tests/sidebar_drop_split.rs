@@ -140,13 +140,33 @@ fn empty_workspace_list_point(state: &ClientShellState) -> (u16, u16) {
     (body.x + 2, body.bottom() - 1)
 }
 
+fn pane_move(actions: &[ClientShellAction]) -> Option<&crate::api::schema::PaneMoveParams> {
+    actions.iter().find_map(|action| match action {
+        ClientShellAction::Endpoint { request, .. } => match &request.method {
+            Method::PaneMove(params) => Some(params),
+            _ => None,
+        },
+        _ => None,
+    })
+}
+
+fn workspace_renames(actions: &[ClientShellAction]) -> Vec<(String, String)> {
+    actions
+        .iter()
+        .filter_map(|action| match action {
+            ClientShellAction::Endpoint { request, .. } => match &request.method {
+                Method::WorkspaceRename(params) => {
+                    Some((params.workspace_id.clone(), params.label.clone()))
+                }
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect()
+}
+
 fn moved_to_new_workspace(actions: &[ClientShellAction]) -> Option<(String, Option<String>)> {
-    let [ClientShellAction::Endpoint { request, .. }] = actions else {
-        return None;
-    };
-    let Method::PaneMove(params) = &request.method else {
-        return None;
-    };
+    let params = pane_move(actions)?;
     let PaneMoveDestination::NewWorkspace { label, .. } = &params.destination else {
         return None;
     };
@@ -164,12 +184,7 @@ fn sends_method(actions: &[ClientShellAction], name: &str) -> bool {
 }
 
 fn moved_split(actions: &[ClientShellAction]) -> Option<SplitDirection> {
-    let [ClientShellAction::Endpoint { request, .. }] = actions else {
-        return None;
-    };
-    let Method::PaneMove(params) = &request.method else {
-        return None;
-    };
+    let params = pane_move(actions)?;
     let PaneMoveDestination::Tab {
         tab_id,
         target_pane_id,
@@ -388,4 +403,67 @@ fn a_drop_on_the_workspace_list_sends_no_pane_move_when_the_server_does_not_acce
     let actions = drag_row_to(&mut state, source, column, row);
 
     assert!(!sends_pane_move(&actions));
+}
+
+fn rename(workspace_id: &str, label: &str) -> (String, String) {
+    (workspace_id.into(), label.into())
+}
+
+#[test]
+fn an_agent_dropped_on_a_pane_joins_the_two_workspace_names() {
+    let mut state = composed(with_agent_on_second_pane(two_workspaces()));
+    let source = agent_row(&state, "pane_2");
+    let target = pane_rect(&state);
+
+    let actions = drag_row_to(&mut state, source, target.right() - 1, target.y);
+
+    assert_eq!(moved_split(&actions), Some(SplitDirection::Right));
+    assert_eq!(
+        workspace_renames(&actions),
+        vec![rename("ws_1", "client-shell/gale")]
+    );
+}
+
+#[test]
+fn a_drop_on_a_zoomed_tab_renames_nothing() {
+    let mut projected = with_agent_on_second_pane(two_workspaces());
+    projected.tabs[0].zoomed = true;
+    let mut state = composed(projected);
+    let source = agent_row(&state, "pane_2");
+    let target = pane_rect(&state);
+
+    let actions = drag_row_to(&mut state, source, target.right() - 1, target.y);
+
+    assert!(workspace_renames(&actions).is_empty(), "{actions:?}");
+}
+
+fn gale_and_pm_on_one_screen() -> ClientShellSnapshot {
+    let mut projected = snapshot();
+    projected.workspaces[0].label = "Gale-Oracle/NWFTH-PM".into();
+    projected.panes[0].cwd = Some("/home/wind/ghq/github.com/deachawatss/gale-oracle".into());
+    let mut pm = projected.panes[0].clone();
+    pm.pane_id = "pane_3".into();
+    pm.focused = false;
+    pm.cwd = Some("/home/wind/ghq/github.com/NWFTH-Software/nwfth-pm".into());
+    projected.panes.push(pm);
+    projected.agents = vec![agent_on("pane_3", "ws_1", "tab_1")];
+    projected
+}
+
+#[test]
+fn an_agent_moved_out_takes_its_name_back_from_the_joined_workspace() {
+    let mut state = composed(gale_and_pm_on_one_screen());
+    let source = agent_row(&state, "pane_3");
+    let (column, row) = empty_workspace_list_point(&state);
+
+    let actions = drag_row_to(&mut state, source, column, row);
+
+    assert_eq!(
+        moved_to_new_workspace(&actions),
+        Some(("pane_3".into(), Some("NWFTH-PM".into())))
+    );
+    assert_eq!(
+        workspace_renames(&actions),
+        vec![rename("ws_1", "Gale-Oracle")]
+    );
 }
