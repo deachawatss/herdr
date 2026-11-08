@@ -248,6 +248,7 @@ pub(crate) fn render_sidebar(
                         displayed_workspace_status(snapshot, workspace, state.collapsed_groups),
                         entry.indented,
                         &config.spaces,
+                        &config.hide_label_prefixes,
                     )
                     .len()
                     .max(1)
@@ -304,7 +305,13 @@ pub(crate) fn render_sidebar(
             continue;
         };
         let status = displayed_workspace_status(snapshot, workspace, state.collapsed_groups);
-        let rows = workspace_rows(workspace, status, entry.indented, &config.spaces);
+        let rows = workspace_rows(
+            workspace,
+            status,
+            entry.indented,
+            &config.spaces,
+            &config.hide_label_prefixes,
+        );
         let row_height = (rows.len().max(1).min(u16::MAX as usize) as u16).min(body.height);
         if y.saturating_add(row_height) > body.bottom() {
             break;
@@ -665,15 +672,17 @@ pub(in crate::client::shell) fn workspace_rows(
     status: crate::api::schema::AgentStatus,
     indented: bool,
     config: &SpacesSidebarConfig,
+    hide_label_prefixes: &[String],
 ) -> Vec<Vec<crate::ui::ResolvedToken>> {
+    let workspace_label = without_hidden_prefixes(&workspace.label, hide_label_prefixes);
     let label = if indented && !workspace.custom_label {
         workspace
             .branch
             .as_deref()
             .and_then(|branch| branch.strip_prefix("worktree/").or(Some(branch)))
-            .unwrap_or(&workspace.label)
+            .unwrap_or(&workspace_label)
     } else {
-        &workspace.label
+        &workspace_label
     };
     let token_values = workspace.tokens.iter().cloned().collect::<HashMap<_, _>>();
     crate::ui::sidebar_space_rows(
@@ -687,6 +696,26 @@ pub(in crate::client::shell) fn workspace_rows(
             suppress_git_details: indented,
         },
     )
+}
+
+pub(in crate::client::shell) fn without_hidden_prefixes(
+    label: &str,
+    prefixes: &[String],
+) -> String {
+    label
+        .split('/')
+        .map(|segment| {
+            prefixes
+                .iter()
+                .find_map(|prefix| {
+                    segment
+                        .strip_prefix(prefix.as_str())
+                        .filter(|rest| !prefix.is_empty() && !rest.is_empty())
+                })
+                .unwrap_or(segment)
+        })
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 pub(in crate::client::shell) fn render_workspace_rows(

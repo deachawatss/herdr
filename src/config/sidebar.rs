@@ -480,6 +480,7 @@ impl Default for SpacesSidebarConfig {
 pub struct SidebarConfig {
     pub agents: AgentsSidebarConfig,
     pub spaces: SpacesSidebarConfig,
+    pub hide_label_prefixes: Vec<String>,
 }
 
 #[cfg(test)]

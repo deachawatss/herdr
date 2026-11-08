@@ -363,6 +363,13 @@ The symbols are static, so this option does not enable spinner animation.
 
 The expanded desktop sidebar renders each inner array in `rows` as one line. These are the complete default layouts:
 
+`hide_label_prefixes` cuts a prefix from the front of each `/` part of a Space name in the Spaces and Agents lists. The Space keeps its full name, and a part that is only the prefix is shown whole.
+
+```toml
+[ui.sidebar]
+hide_label_prefixes = ["NWFTH-"]
+```
+
 ```toml
 [ui.sidebar.agents]
 row_gap = 0
