@@ -296,7 +296,10 @@ pub(super) fn agent_row(
         &config.agents,
         crate::ui::AgentTokenContext {
             machine,
-            workspace: &workspace.label,
+            workspace: &super::sidebar::without_hidden_prefixes(
+                &workspace.label,
+                &config.hide_label_prefixes,
+            ),
             tab: tab_label,
             pane: agent
                 .title

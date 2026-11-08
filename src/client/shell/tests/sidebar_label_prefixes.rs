@@ -2,7 +2,7 @@ use super::*;
 
 fn sidebar_text(prefixes: &[&str], label: &str) -> String {
     let mut config = Config::default();
-    config.ui.sidebar.spaces.hide_label_prefixes =
+    config.ui.sidebar.hide_label_prefixes =
         prefixes.iter().map(|prefix| prefix.to_string()).collect();
     let mut projected = snapshot();
     projected.workspaces[0].label = label.into();
@@ -46,7 +46,15 @@ fn workspace_names_are_shown_whole_by_default() {
 #[test]
 fn hide_label_prefixes_parses() {
     let config: Config =
-        toml::from_str("[ui.sidebar.spaces]\nhide_label_prefixes = [\"NWFTH-\"]\n").unwrap();
+        toml::from_str("[ui.sidebar]\nhide_label_prefixes = [\"NWFTH-\"]\n").unwrap();
 
-    assert_eq!(config.ui.sidebar.spaces.hide_label_prefixes, vec!["NWFTH-"]);
+    assert_eq!(config.ui.sidebar.hide_label_prefixes, vec!["NWFTH-"]);
+}
+
+#[test]
+fn an_empty_prefix_does_not_hide_the_next_one() {
+    let text = sidebar_text(&["", "NWFTH-"], "NWFTH-ERP");
+
+    assert!(text.contains(" ERP"), "{text}");
+    assert!(!text.contains("NWFTH-ERP"), "{text}");
 }

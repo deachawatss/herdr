@@ -1091,10 +1091,10 @@
           "description": "Blank terminal rows between worktree groups and unrelated top-level Spaces. Worktree parents and their indented children remain packed."
         },
         {
-          "key": "ui.sidebar.spaces.hide_label_prefixes",
+          "key": "ui.sidebar.hide_label_prefixes",
           "type": "list of strings",
           "default": "[]",
-          "description": "Prefixes cut from the front of each \"/\"-separated part of a Space name in the sidebar. The Space keeps its full name; a part that is only the prefix is shown whole."
+          "description": "Prefixes cut from the front of each \"/\"-separated part of a Space name in the Spaces and Agents lists of the sidebar. The Space keeps its full name; a part that is only the prefix is shown whole."
         },
         {
           "key": "ui.sidebar.spaces.rows",
