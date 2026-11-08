@@ -78,26 +78,15 @@ impl ClientShellState {
         true
     }
 
-    pub(super) fn handle_endpoint_agent_click(
-        &mut self,
+    pub(super) fn endpoint_agent_at(
+        &self,
         point: (u16, u16),
-        outcome: &mut ClientShellInput,
-    ) -> bool {
-        let Some((endpoint_id, pane_id)) = self
-            .hits
+    ) -> Option<(ClientEndpointId, String)> {
+        self.hits
             .endpoint_agents
             .iter()
             .find(|(rect, _, _)| super::contains(*rect, point))
             .map(|(_, endpoint_id, pane_id)| (endpoint_id.clone(), pane_id.clone()))
-        else {
-            return false;
-        };
-        self.focus_or_activate(
-            endpoint_id,
-            ClientEndpointFocusTarget::Pane(pane_id),
-            outcome,
-        );
-        true
     }
 
     pub(super) fn handle_endpoint_navigation(

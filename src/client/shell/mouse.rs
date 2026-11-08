@@ -647,16 +647,23 @@ impl ClientShellState {
         self.supports_endpoint_method(&method).then_some(method)
     }
 
-    fn pane_to_new_workspace_method(
+    fn pane_to_new_workspace_drop_method(
         &self,
         source_pane_id: &str,
         point: (u16, u16),
     ) -> Option<crate::api::schema::Method> {
-        use crate::api::schema::{Method, PaneMoveDestination, PaneMoveParams};
-
         if !super::contains(self.hits.workspace_body, point) {
             return None;
         }
+        self.pane_to_new_workspace_method(source_pane_id)
+    }
+
+    pub(super) fn pane_to_new_workspace_method(
+        &self,
+        source_pane_id: &str,
+    ) -> Option<crate::api::schema::Method> {
+        use crate::api::schema::{Method, PaneMoveDestination, PaneMoveParams};
+
         let snapshot = self.snapshot.as_deref()?;
         let source_pane = snapshot
             .panes
@@ -1429,7 +1436,7 @@ impl ClientShellState {
                     ClientChromeDrag::AgentPane { pane_id } => {
                         if let Some(method) = self
                             .pane_drop_method(&pane_id, point)
-                            .or_else(|| self.pane_to_new_workspace_method(&pane_id, point))
+                            .or_else(|| self.pane_to_new_workspace_drop_method(&pane_id, point))
                         {
                             self.push_endpoint_method(method, outcome);
                         }
@@ -1511,6 +1518,9 @@ impl ClientShellState {
                 return;
             }
             if let Some(press) = self.agent_press.take() {
+                if press.focused_on_press {
+                    return;
+                }
                 self.push_endpoint_method(
                     crate::api::schema::Method::PaneFocus(crate::api::schema::PaneTarget {
                         pane_id: press.pane_id,
@@ -2279,7 +2289,21 @@ impl ClientShellState {
                     self.tab_press = Some(tab_press);
                     return;
                 }
-                if self.handle_endpoint_agent_click(point, outcome) {
+                if let Some((endpoint_id, pane_id)) = self.endpoint_agent_at(point) {
+                    let on_active_machine = endpoint_id == self.active_endpoint_id;
+                    let focused = self.focus_or_activate(
+                        endpoint_id,
+                        ClientEndpointFocusTarget::Pane(pane_id.clone()),
+                        outcome,
+                    );
+                    if focused && on_active_machine {
+                        self.agent_press = Some(ClientAgentPress {
+                            pane_id,
+                            start_column: mouse.column,
+                            start_row: mouse.row,
+                            focused_on_press: true,
+                        });
+                    }
                     return;
                 }
                 let agent_pane_id = self
@@ -2293,6 +2317,7 @@ impl ClientShellState {
                         pane_id,
                         start_column: mouse.column,
                         start_row: mouse.row,
+                        focused_on_press: false,
                     });
                     return;
                 }

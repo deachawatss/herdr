@@ -2839,3 +2839,127 @@ fn navigator_foreign_workspace_heading_keeps_the_workspace_target() {
         }] if activated == &endpoint_id && workspace_id == "ws_1"
     ));
 }
+
+fn state_with_a_local_agent_beside_a_pane() -> (ClientShellState, Rect) {
+    let mut local = snapshot();
+    let mut gale = local.panes[0].clone();
+    gale.pane_id = "pane_3".into();
+    gale.focused = false;
+    gale.cwd = Some("/home/wind/ghq/github.com/deachawatss/gale-oracle".into());
+    local.panes.push(gale);
+    local.agents = vec![ClientShellAgent {
+        pane_id: "pane_3".into(),
+        focused: false,
+        ..agent("gale-oracle", AgentStatus::Idle, 1)
+    }];
+    let (mut state, _) = state_with_remote();
+    state.set_endpoint_snapshot(&ClientEndpointId::Local, Box::new(local));
+    state.compose(100, 28).unwrap();
+    let (row, _, _) = state
+        .hits
+        .endpoint_agents
+        .iter()
+        .find(|(_, endpoint, pane)| endpoint.is_local() && pane == "pane_3")
+        .expect("the local agent row")
+        .clone();
+    (state, row)
+}
+
+fn left_mouse(
+    state: &mut ClientShellState,
+    kind: MouseEventKind,
+    column: u16,
+    row: u16,
+) -> ClientShellInput {
+    state.handle_raw_events(vec![RawInputEvent::Mouse(MouseEvent {
+        kind,
+        column,
+        row,
+        modifiers: KeyModifiers::NONE,
+    })])
+}
+
+#[test]
+fn an_agent_row_of_the_active_machine_dragged_to_the_workspace_list_moves_its_pane() {
+    use crate::api::schema::{Method, PaneMoveDestination};
+
+    let (mut state, row) = state_with_a_local_agent_beside_a_pane();
+    let body = state.hits.workspace_body;
+    let (column, line) = (body.x + 2, body.bottom() - 1);
+
+    left_mouse(
+        &mut state,
+        MouseEventKind::Down(MouseButton::Left),
+        row.x + 2,
+        row.y,
+    );
+    left_mouse(
+        &mut state,
+        MouseEventKind::Drag(MouseButton::Left),
+        column,
+        line,
+    );
+    let released = left_mouse(
+        &mut state,
+        MouseEventKind::Up(MouseButton::Left),
+        column,
+        line,
+    );
+
+    let moved = released.actions.iter().find_map(|action| match action {
+        ClientShellAction::Endpoint { request, .. } => match &request.method {
+            Method::PaneMove(params) => match &params.destination {
+                PaneMoveDestination::NewWorkspace { label, .. } => {
+                    Some((params.pane_id.clone(), label.clone()))
+                }
+                _ => None,
+            },
+            _ => None,
+        },
+        _ => None,
+    });
+    assert_eq!(moved, Some(("pane_3".into(), Some("gale-oracle".into()))));
+}
+
+#[test]
+fn a_click_on_an_agent_row_of_the_active_machine_focuses_once() {
+    let (mut state, row) = state_with_a_local_agent_beside_a_pane();
+
+    let pressed = left_mouse(
+        &mut state,
+        MouseEventKind::Down(MouseButton::Left),
+        row.x + 2,
+        row.y,
+    );
+    let released = left_mouse(
+        &mut state,
+        MouseEventKind::Up(MouseButton::Left),
+        row.x + 2,
+        row.y,
+    );
+
+    assert_eq!(pressed.actions.len(), 1, "{:?}", pressed.actions);
+    assert!(released.actions.is_empty(), "{:?}", released.actions);
+}
+
+#[test]
+fn a_press_on_an_agent_row_of_another_machine_starts_no_drag() {
+    let (mut state, remote) = state_with_scrollable_agents();
+    state.compose(100, 28).unwrap();
+    let (row, _, _) = state
+        .hits
+        .endpoint_agents
+        .iter()
+        .find(|(_, endpoint, _)| endpoint == &remote)
+        .expect("a remote agent row")
+        .clone();
+
+    left_mouse(
+        &mut state,
+        MouseEventKind::Down(MouseButton::Left),
+        row.x + 2,
+        row.y,
+    );
+
+    assert!(state.agent_press.is_none());
+}
