@@ -230,6 +230,9 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 # allow_unelevated_clients = false
 # headless_cols = 120
 # headless_rows = 40
+# Start the server with this command when none is running, so a service manager such as
+# systemd owns it. Unix only. The command gets HERDR_SESSION_NAME.
+# start_command = "systemctl --user start herdr-agents.service"
 
 # [worktrees]
 # directory = "~/.herdr/worktrees"
