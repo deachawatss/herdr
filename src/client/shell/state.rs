@@ -184,6 +184,7 @@ pub(super) struct ClientAgentPress {
     pub(super) pane_id: String,
     pub(super) start_column: u16,
     pub(super) start_row: u16,
+    pub(super) focused_on_press: bool,
 }
 
 pub(super) struct ClientTabPress {
@@ -534,6 +535,7 @@ pub(super) enum ClientContextMenuAction {
     SplitDown,
     Zoom,
     ToggleRightClickPassthrough,
+    MoveToNewWorkspace,
     ClosePane,
 }
 
@@ -557,6 +559,7 @@ pub(super) enum ClientContextMenuTarget {
         source_pane_id: Option<String>,
         has_manual_label: bool,
         right_click_passthrough: bool,
+        can_move_to_new_workspace: bool,
     },
 }
 

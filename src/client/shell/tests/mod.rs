@@ -260,6 +260,7 @@ mod keybindings_settings;
 mod link_hover;
 mod mobile;
 mod mouse_selection;
+mod pane_menu_new_workspace;
 mod popup_focus_projection;
 mod sidebar_drop_split;
 mod startup_overlays;

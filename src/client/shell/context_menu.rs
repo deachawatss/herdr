@@ -54,6 +54,7 @@ impl ClientContextMenuOverlay {
                 source_pane_id,
                 has_manual_label,
                 right_click_passthrough,
+                can_move_to_new_workspace,
                 ..
             } => {
                 let mut items = vec![item("Rename pane", Action::RenamePane)];
@@ -75,8 +76,11 @@ impl ClientContextMenuOverlay {
                         },
                         Action::ToggleRightClickPassthrough,
                     ),
-                    item("Close pane", Action::ClosePane),
                 ]);
+                if *can_move_to_new_workspace {
+                    items.push(item("Move to new workspace", Action::MoveToNewWorkspace));
+                }
+                items.push(item("Close pane", Action::ClosePane));
                 items
             }
         }
@@ -153,6 +157,7 @@ impl ClientShellState {
             .focused_pane_id
             .clone()
             .filter(|focused| focused != &pane_id);
+        let can_move_to_new_workspace = self.pane_to_new_workspace_method(&pane_id).is_some();
         self.overlay = Some(ClientShellOverlay::ContextMenu(ClientContextMenuOverlay {
             target: ClientContextMenuTarget::Pane {
                 pane_id,
@@ -160,6 +165,7 @@ impl ClientShellState {
                 source_pane_id,
                 has_manual_label: pane.label.is_some(),
                 right_click_passthrough: pane.right_click_passthrough,
+                can_move_to_new_workspace,
             },
             x,
             y,
@@ -447,6 +453,11 @@ impl ClientShellState {
                 }),
                 outcome,
             ),
+            ClientContextMenuAction::MoveToNewWorkspace => {
+                if let Some(method) = self.pane_to_new_workspace_method(&pane_id) {
+                    self.push_endpoint_method(method, outcome);
+                }
+            }
             ClientContextMenuAction::ClosePane => self.request_pane_close(pane_id, outcome),
             _ => {}
         }

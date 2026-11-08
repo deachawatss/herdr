@@ -647,16 +647,12 @@ impl ClientShellState {
         self.supports_endpoint_method(&method).then_some(method)
     }
 
-    fn pane_to_new_workspace_method(
+    pub(super) fn pane_to_new_workspace_method(
         &self,
         source_pane_id: &str,
-        point: (u16, u16),
     ) -> Option<crate::api::schema::Method> {
         use crate::api::schema::{Method, PaneMoveDestination, PaneMoveParams};
 
-        if !super::contains(self.hits.workspace_body, point) {
-            return None;
-        }
         let snapshot = self.snapshot.as_deref()?;
         let source_pane = snapshot
             .panes
@@ -1427,10 +1423,11 @@ impl ClientShellState {
                         outcome.repaint = true;
                     }
                     ClientChromeDrag::AgentPane { pane_id } => {
-                        if let Some(method) = self
-                            .pane_drop_method(&pane_id, point)
-                            .or_else(|| self.pane_to_new_workspace_method(&pane_id, point))
-                        {
+                        if let Some(method) = self.pane_drop_method(&pane_id, point).or_else(|| {
+                            super::contains(self.hits.workspace_body, point)
+                                .then(|| self.pane_to_new_workspace_method(&pane_id))
+                                .flatten()
+                        }) {
                             self.push_endpoint_method(method, outcome);
                         }
                         outcome.repaint = true;
@@ -1511,6 +1508,9 @@ impl ClientShellState {
                 return;
             }
             if let Some(press) = self.agent_press.take() {
+                if press.focused_on_press {
+                    return;
+                }
                 self.push_endpoint_method(
                     crate::api::schema::Method::PaneFocus(crate::api::schema::PaneTarget {
                         pane_id: press.pane_id,
@@ -2279,7 +2279,21 @@ impl ClientShellState {
                     self.tab_press = Some(tab_press);
                     return;
                 }
+                let active_endpoint_agent = self
+                    .hits
+                    .endpoint_agents
+                    .iter()
+                    .find(|(rect, endpoint_id, _)| {
+                        super::contains(*rect, point) && *endpoint_id == self.active_endpoint_id
+                    })
+                    .map(|(_, _, pane_id)| pane_id.clone());
                 if self.handle_endpoint_agent_click(point, outcome) {
+                    self.agent_press = active_endpoint_agent.map(|pane_id| ClientAgentPress {
+                        pane_id,
+                        start_column: mouse.column,
+                        start_row: mouse.row,
+                        focused_on_press: true,
+                    });
                     return;
                 }
                 let agent_pane_id = self
@@ -2293,6 +2307,7 @@ impl ClientShellState {
                         pane_id,
                         start_column: mouse.column,
                         start_row: mouse.row,
+                        focused_on_press: false,
                     });
                     return;
                 }

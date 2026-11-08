@@ -2839,3 +2839,70 @@ fn navigator_foreign_workspace_heading_keeps_the_workspace_target() {
         }] if activated == &endpoint_id && workspace_id == "ws_1"
     ));
 }
+
+#[test]
+fn an_agent_row_of_the_active_machine_dragged_to_the_workspace_list_moves_its_pane() {
+    use crate::api::schema::{Method, PaneMoveDestination};
+
+    let mut local = snapshot();
+    let mut gale = local.panes[0].clone();
+    gale.pane_id = "pane_3".into();
+    gale.focused = false;
+    gale.cwd = Some("/home/wind/ghq/github.com/deachawatss/gale-oracle".into());
+    local.panes.push(gale);
+    local.agents = vec![ClientShellAgent {
+        pane_id: "pane_3".into(),
+        focused: false,
+        ..agent("gale-oracle", AgentStatus::Idle, 1)
+    }];
+    let (mut state, _) = state_with_remote();
+    state.set_endpoint_snapshot(&ClientEndpointId::Local, Box::new(local));
+    state.compose(100, 28).unwrap();
+    let (row, _, _) = state
+        .hits
+        .endpoint_agents
+        .iter()
+        .find(|(_, endpoint, pane)| endpoint.is_local() && pane == "pane_3")
+        .expect("the local agent row")
+        .clone();
+    let body = state.hits.workspace_body;
+    let drop = (body.x + 2, body.bottom() - 1);
+    let press = |kind, column, row| {
+        RawInputEvent::Mouse(MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        })
+    };
+
+    state.handle_raw_events(vec![press(
+        MouseEventKind::Down(MouseButton::Left),
+        row.x + 2,
+        row.y,
+    )]);
+    state.handle_raw_events(vec![press(
+        MouseEventKind::Drag(MouseButton::Left),
+        drop.0,
+        drop.1,
+    )]);
+    let released = state.handle_raw_events(vec![press(
+        MouseEventKind::Up(MouseButton::Left),
+        drop.0,
+        drop.1,
+    )]);
+
+    let moved = released.actions.iter().find_map(|action| match action {
+        ClientShellAction::Endpoint { request, .. } => match &request.method {
+            Method::PaneMove(params) => match &params.destination {
+                PaneMoveDestination::NewWorkspace { label, .. } => {
+                    Some((params.pane_id.clone(), label.clone()))
+                }
+                _ => None,
+            },
+            _ => None,
+        },
+        _ => None,
+    });
+    assert_eq!(moved, Some(("pane_3".into(), Some("gale-oracle".into()))));
+}
