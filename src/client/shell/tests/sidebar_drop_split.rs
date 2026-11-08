@@ -150,21 +150,14 @@ fn pane_move(actions: &[ClientShellAction]) -> Option<&crate::api::schema::PaneM
     })
 }
 
-fn renames(actions: &[ClientShellAction]) -> Vec<(String, String, Option<String>)> {
+fn workspace_renames(actions: &[ClientShellAction]) -> Vec<(String, String)> {
     actions
         .iter()
         .filter_map(|action| match action {
             ClientShellAction::Endpoint { request, .. } => match &request.method {
-                Method::WorkspaceRename(params) => Some((
-                    "workspace".to_string(),
-                    params.workspace_id.clone(),
-                    Some(params.label.clone()),
-                )),
-                Method::PaneRename(params) => Some((
-                    "pane".to_string(),
-                    params.pane_id.clone(),
-                    params.label.clone(),
-                )),
+                Method::WorkspaceRename(params) => {
+                    Some((params.workspace_id.clone(), params.label.clone()))
+                }
                 _ => None,
             },
             _ => None,
@@ -412,8 +405,8 @@ fn a_drop_on_the_workspace_list_sends_no_pane_move_when_the_server_does_not_acce
     assert!(!sends_pane_move(&actions));
 }
 
-fn rename(kind: &str, id: &str, label: &str) -> (String, String, Option<String>) {
-    (kind.into(), id.into(), Some(label.into()))
+fn rename(workspace_id: &str, label: &str) -> (String, String) {
+    (workspace_id.into(), label.into())
 }
 
 #[test]
@@ -426,24 +419,32 @@ fn an_agent_dropped_on_a_pane_joins_the_two_workspace_names() {
 
     assert_eq!(moved_split(&actions), Some(SplitDirection::Right));
     assert_eq!(
-        renames(&actions),
-        vec![
-            rename("workspace", "ws_1", "client-shell/gale"),
-            rename("pane", "pane_1", "client-shell"),
-            rename("pane", "pane_2", "gale"),
-        ]
+        workspace_renames(&actions),
+        vec![rename("ws_1", "client-shell/gale")]
     );
+}
+
+#[test]
+fn a_drop_on_a_zoomed_tab_renames_nothing() {
+    let mut projected = with_agent_on_second_pane(two_workspaces());
+    projected.tabs[0].zoomed = true;
+    let mut state = composed(projected);
+    let source = agent_row(&state, "pane_2");
+    let target = pane_rect(&state);
+
+    let actions = drag_row_to(&mut state, source, target.right() - 1, target.y);
+
+    assert!(workspace_renames(&actions).is_empty(), "{actions:?}");
 }
 
 fn gale_and_pm_on_one_screen() -> ClientShellSnapshot {
     let mut projected = snapshot();
     projected.workspaces[0].label = "Gale-Oracle/NWFTH-PM".into();
-    projected.panes[0].label = Some("Gale-Oracle".into());
+    projected.panes[0].cwd = Some("/home/wind/ghq/github.com/deachawatss/gale-oracle".into());
     let mut pm = projected.panes[0].clone();
     pm.pane_id = "pane_3".into();
     pm.focused = false;
-    pm.label = Some("NWFTH-PM".into());
-    pm.cwd = Some("/home/wind/ghq/github.com/NWFTH-Software/pm-worktree".into());
+    pm.cwd = Some("/home/wind/ghq/github.com/NWFTH-Software/nwfth-pm".into());
     projected.panes.push(pm);
     projected.agents = vec![agent_on("pane_3", "ws_1", "tab_1")];
     projected
@@ -462,7 +463,7 @@ fn an_agent_moved_out_takes_its_name_back_from_the_joined_workspace() {
         Some(("pane_3".into(), Some("NWFTH-PM".into())))
     );
     assert_eq!(
-        renames(&actions),
-        vec![rename("workspace", "ws_1", "Gale-Oracle")]
+        workspace_renames(&actions),
+        vec![rename("ws_1", "Gale-Oracle")]
     );
 }

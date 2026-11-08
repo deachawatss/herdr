@@ -664,19 +664,11 @@ impl ClientShellState {
     ) -> Option<crate::api::schema::Method> {
         use crate::api::schema::{Method, PaneMoveDestination, PaneMoveParams};
 
-        let snapshot = self.snapshot.as_deref()?;
-        let source_pane = snapshot
-            .panes
-            .iter()
-            .find(|pane| pane.pane_id == source_pane_id)?;
-        let shares_its_workspace = snapshot.panes.iter().any(|pane| {
-            pane.workspace_id == source_pane.workspace_id && pane.pane_id != source_pane.pane_id
-        });
-        if !shares_its_workspace {
+        if !self.pane_shares_its_workspace(source_pane_id) {
             return None;
         }
         let method = Method::PaneMove(PaneMoveParams {
-            pane_id: source_pane.pane_id.clone(),
+            pane_id: source_pane_id.to_owned(),
             destination: PaneMoveDestination::NewWorkspace {
                 label: self.pane_name(source_pane_id),
                 tab_label: None,
