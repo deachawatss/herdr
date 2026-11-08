@@ -191,16 +191,17 @@ fn validate_running_server_compatibility(saved_federation: bool) -> io::Result<(
 // Server spawning
 // ---------------------------------------------------------------------------
 
-/// Spawns the herdr server as a background daemon process.
+/// Starts the herdr server in the background.
 ///
-/// The server process is fully detached:
+/// When `server.start_command` is set, runs it with `sh -c` and `HERDR_SESSION_NAME`, so a
+/// service manager owns the server process. Otherwise spawns the server as its own child.
+///
+/// The spawned child is fully detached:
 /// - Runs in its own session (setsid) so it survives the client exiting
 /// - Stdin/stdout/stderr are redirected to /dev/null
 /// - Inherits relevant environment variables (`XDG_CONFIG_HOME`, `HERDR_SESSION`,
 ///   socket overrides, etc.), except inherited socket overrides are cleared when
 ///   this CLI invocation explicitly selected a session.
-///
-/// Returns the PID of the spawned server process.
 pub fn spawn_server_daemon() -> io::Result<()> {
     if let Some(start_command) = crate::config::Config::load().config.server.start_command {
         let session_name = crate::session::active_name()
@@ -233,25 +234,27 @@ fn run_server_start_command(start_command: &str, session_name: &str) -> io::Resu
         start_command,
         session_name, "starting server with server.start_command"
     );
-    let status = Command::new("sh")
+    let output = Command::new("sh")
         .arg("-c")
         .arg(start_command)
         .env("HERDR_SESSION_NAME", session_name)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
+        .stderr(std::process::Stdio::piped())
+        .output()
         .map_err(|err| {
             io::Error::new(
                 err.kind(),
                 format!("failed to run server.start_command `{start_command}`: {err}"),
             )
         })?;
-    if status.success() {
+    if output.status.success() {
         Ok(())
     } else {
         Err(io::Error::other(format!(
-            "server.start_command `{start_command}` failed: {status}"
+            "server.start_command `{start_command}` failed: {}: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim()
         )))
     }
 }
@@ -478,9 +481,11 @@ mod tests {
 
     #[test]
     fn failed_server_start_command_is_an_error() {
-        let error = run_server_start_command("exit 3", "default").unwrap_err();
+        let error =
+            run_server_start_command("echo Unit not found >&2; exit 3", "default").unwrap_err();
 
-        assert!(error.to_string().contains("server.start_command"));
+        assert!(error.to_string().contains("exit status: 3"));
+        assert!(error.to_string().contains("Unit not found"));
     }
 
     #[test]
