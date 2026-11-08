@@ -101,10 +101,15 @@ fn drag_second_workspace_to(
 }
 
 fn with_agent_on_second_pane(mut projected: ClientShellSnapshot) -> ClientShellSnapshot {
-    projected.agents = vec![ClientShellAgent {
-        pane_id: "pane_2".into(),
-        workspace_id: "ws_2".into(),
-        tab_id: "tab_2".into(),
+    projected.agents = vec![agent_on("pane_2", "ws_2", "tab_2")];
+    projected
+}
+
+fn agent_on(pane_id: &str, workspace_id: &str, tab_id: &str) -> ClientShellAgent {
+    ClientShellAgent {
+        pane_id: pane_id.into(),
+        workspace_id: workspace_id.into(),
+        tab_id: tab_id.into(),
         name: Some("gale".into()),
         display_agent: None,
         agent: Some("claude".into()),
@@ -116,8 +121,36 @@ fn with_agent_on_second_pane(mut projected: ClientShellSnapshot) -> ClientShellS
         state_labels: Vec::new(),
         tokens: Vec::new(),
         focused: false,
-    }];
+    }
+}
+
+fn gale_split_beside_the_focused_pane() -> ClientShellSnapshot {
+    let mut projected = snapshot();
+    let mut gale = projected.panes[0].clone();
+    gale.pane_id = "pane_3".into();
+    gale.focused = false;
+    gale.cwd = Some("/home/wind/ghq/github.com/deachawatss/gale-oracle".into());
+    projected.panes.push(gale);
+    projected.agents = vec![agent_on("pane_3", "ws_1", "tab_1")];
     projected
+}
+
+fn empty_workspace_list_point(state: &ClientShellState) -> (u16, u16) {
+    let body = state.hits.workspace_body;
+    (body.x + 2, body.bottom() - 1)
+}
+
+fn moved_to_new_workspace(actions: &[ClientShellAction]) -> Option<(String, Option<String>)> {
+    let [ClientShellAction::Endpoint { request, .. }] = actions else {
+        return None;
+    };
+    let Method::PaneMove(params) = &request.method else {
+        return None;
+    };
+    let PaneMoveDestination::NewWorkspace { label, .. } = &params.destination else {
+        return None;
+    };
+    Some((params.pane_id.clone(), label.clone()))
 }
 
 fn sends_method(actions: &[ClientShellAction], name: &str) -> bool {
@@ -317,4 +350,42 @@ fn the_local_machine_is_named_local_by_default() {
     let state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
 
     assert_eq!(state.endpoints[0].label, "Local");
+}
+
+#[test]
+fn an_agent_row_dropped_on_the_workspace_list_moves_its_pane_to_a_new_workspace() {
+    let mut state = composed(gale_split_beside_the_focused_pane());
+    let source = agent_row(&state, "pane_3");
+    let (column, row) = empty_workspace_list_point(&state);
+
+    let actions = drag_row_to(&mut state, source, column, row);
+
+    assert_eq!(
+        moved_to_new_workspace(&actions),
+        Some(("pane_3".into(), Some("gale-oracle".into())))
+    );
+    assert!(state.chrome_drag.is_none());
+}
+
+#[test]
+fn the_only_pane_of_a_workspace_dropped_on_the_workspace_list_sends_no_pane_move() {
+    let mut state = composed(with_agent_on_second_pane(two_workspaces()));
+    let source = agent_row(&state, "pane_2");
+    let (column, row) = empty_workspace_list_point(&state);
+
+    let actions = drag_row_to(&mut state, source, column, row);
+
+    assert!(!sends_pane_move(&actions));
+}
+
+#[test]
+fn a_drop_on_the_workspace_list_sends_no_pane_move_when_the_server_does_not_accept_pane_move() {
+    let mut state = composed(gale_split_beside_the_focused_pane());
+    state.set_endpoint_methods(Some(vec!["workspace.move".into(), "pane.focus".into()]));
+    let source = agent_row(&state, "pane_3");
+    let (column, row) = empty_workspace_list_point(&state);
+
+    let actions = drag_row_to(&mut state, source, column, row);
+
+    assert!(!sends_pane_move(&actions));
 }
