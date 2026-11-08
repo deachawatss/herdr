@@ -647,6 +647,43 @@ impl ClientShellState {
         self.supports_endpoint_method(&method).then_some(method)
     }
 
+    fn pane_to_new_workspace_method(
+        &self,
+        source_pane_id: &str,
+        point: (u16, u16),
+    ) -> Option<crate::api::schema::Method> {
+        use crate::api::schema::{Method, PaneMoveDestination, PaneMoveParams};
+
+        if !super::contains(self.hits.workspace_body, point) {
+            return None;
+        }
+        let snapshot = self.snapshot.as_deref()?;
+        let source_pane = snapshot
+            .panes
+            .iter()
+            .find(|pane| pane.pane_id == source_pane_id)?;
+        let shares_its_workspace = snapshot.panes.iter().any(|pane| {
+            pane.workspace_id == source_pane.workspace_id && pane.pane_id != source_pane.pane_id
+        });
+        if !shares_its_workspace {
+            return None;
+        }
+        let folder_name = source_pane.cwd.as_deref().and_then(|cwd| {
+            std::path::Path::new(cwd)
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+        });
+        let method = Method::PaneMove(PaneMoveParams {
+            pane_id: source_pane.pane_id.clone(),
+            destination: PaneMoveDestination::NewWorkspace {
+                label: folder_name,
+                tab_label: None,
+            },
+            focus: true,
+        });
+        self.supports_endpoint_method(&method).then_some(method)
+    }
+
     fn workspace_move_method(
         &self,
         source_workspace_id: &str,
@@ -1390,7 +1427,10 @@ impl ClientShellState {
                         outcome.repaint = true;
                     }
                     ClientChromeDrag::AgentPane { pane_id } => {
-                        if let Some(method) = self.pane_drop_method(&pane_id, point) {
+                        if let Some(method) = self
+                            .pane_drop_method(&pane_id, point)
+                            .or_else(|| self.pane_to_new_workspace_method(&pane_id, point))
+                        {
                             self.push_endpoint_method(method, outcome);
                         }
                         outcome.repaint = true;

@@ -271,3 +271,71 @@ async fn a_client_shell_endpoint_moves_a_pane_into_a_split_of_its_tab() {
     }
     shutdown_test_runtimes(&mut server);
 }
+
+#[tokio::test]
+async fn a_client_shell_endpoint_moves_a_split_pane_back_to_a_workspace_of_its_own() {
+    let mut server = pane_move_server();
+    let target = server.app.state.workspaces[0].tabs[0].root_pane;
+    let source = server.app.state.workspaces[1].tabs[0].root_pane;
+    let target_id = server.app.public_pane_id(0, target).unwrap();
+    let source_id = server.app.public_pane_id(1, source).unwrap();
+    let tab_id = server.app.public_tab_id(0, 0).unwrap();
+    let (control_rx, _render_rx) = connect_test_shell(&mut server, 9, 80, 23);
+    let _initial = client_shell_snapshot(&control_rx);
+    let send = |server: &mut HeadlessServer, id: &str, pane_id: String, destination| {
+        let boot_id = server.client_shell_boot_id.clone();
+        server.handle_server_event(ServerEvent::ClientShellEndpointRequest {
+            client_id: 9,
+            boot_id,
+            request: Box::new(crate::api::schema::Request {
+                id: id.into(),
+                method: crate::api::schema::Method::PaneMove(PaneMoveParams {
+                    pane_id,
+                    destination,
+                    focus: true,
+                }),
+            }),
+        });
+    };
+    send(
+        &mut server,
+        "client-shell:drop",
+        source_id,
+        PaneMoveDestination::Tab {
+            tab_id,
+            target_pane_id: Some(target_id),
+            split: crate::api::schema::SplitDirection::Right,
+            ratio: None,
+        },
+    );
+    assert_eq!(server.app.state.workspaces.len(), 1);
+    for _ in 0..100 {
+        server.drain_server_events();
+        if !server.clients[&9].shell_endpoint_command_in_flight {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    let moved_id = server.app.public_pane_id(0, source).unwrap();
+
+    send(
+        &mut server,
+        "client-shell:drag-back",
+        moved_id,
+        PaneMoveDestination::NewWorkspace {
+            label: Some("gale-oracle".into()),
+            tab_label: None,
+        },
+    );
+
+    assert_eq!(server.app.state.workspaces.len(), 2);
+    assert_eq!(server.app.state.workspaces[0].tabs[0].panes.len(), 1);
+    assert_eq!(
+        server.app.state.workspaces[1].custom_name.as_deref(),
+        Some("gale-oracle")
+    );
+    for workspace in &server.app.state.workspaces {
+        workspace.assert_invariants_for_test();
+    }
+    shutdown_test_runtimes(&mut server);
+}
