@@ -1048,6 +1048,9 @@ pub struct ServerConfig {
     pub headless_cols: u16,
     /// Virtual terminal height used when no client is attached. Default: 40.
     pub headless_rows: u16,
+    /// Unix shell command that starts the server when none is running, for a machine where a
+    /// service manager owns the server process. It gets `HERDR_SESSION_NAME`. Default: unset.
+    pub start_command: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1321,6 +1324,7 @@ impl Default for ServerConfig {
             allow_unelevated_clients: false,
             headless_cols: crate::config::DEFAULT_HEADLESS_COLS,
             headless_rows: crate::config::DEFAULT_HEADLESS_ROWS,
+            start_command: None,
         }
     }
 }
@@ -2011,6 +2015,18 @@ headless_rows = 50
         .unwrap();
         assert_eq!(config.server.headless_cols, 160);
         assert_eq!(config.server.headless_rows, 50);
+        assert_eq!(default_config.server.start_command, None);
+
+        let config: Config = toml::from_str(
+            r#"[server]
+start_command = "systemctl --user start herdr-agents.service"
+"#,
+        )
+        .unwrap();
+        assert_eq!(
+            config.server.start_command.as_deref(),
+            Some("systemctl --user start herdr-agents.service")
+        );
 
         let invalid: Config = toml::from_str(
             r#"[server]

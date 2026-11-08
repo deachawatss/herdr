@@ -33,6 +33,12 @@
           "type": "integer",
           "default": "40",
           "description": "Virtual terminal height used for layout and newly created panes when no client is attached. Must be greater than zero."
+        },
+        {
+          "key": "server.start_command",
+          "type": "string",
+          "default": "unset",
+          "description": "Unix shell command that starts the server when none is running, so a service manager such as systemd owns the server process. Herdr runs it with sh -c and sets HERDR_SESSION_NAME, then waits for the server socket. Unset: Herdr starts the server as its own child process."
         }
       ]
     },

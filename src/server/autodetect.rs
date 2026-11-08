@@ -201,7 +201,13 @@ fn validate_running_server_compatibility(saved_federation: bool) -> io::Result<(
 ///   this CLI invocation explicitly selected a session.
 ///
 /// Returns the PID of the spawned server process.
-pub fn spawn_server_daemon() -> io::Result<u32> {
+pub fn spawn_server_daemon() -> io::Result<()> {
+    if let Some(start_command) = crate::config::Config::load().config.server.start_command {
+        let session_name = crate::session::active_name()
+            .unwrap_or_else(|| crate::session::DEFAULT_SESSION_NAME.to_string());
+        return run_server_start_command(&start_command, &session_name);
+    }
+
     let exe = std::env::current_exe().map_err(|err| {
         io::Error::new(
             err.kind(),
@@ -219,7 +225,35 @@ pub fn spawn_server_daemon() -> io::Result<u32> {
         })?;
     info!(pid, "server daemon spawned");
 
-    Ok(pid)
+    Ok(())
+}
+
+fn run_server_start_command(start_command: &str, session_name: &str) -> io::Result<()> {
+    info!(
+        start_command,
+        session_name, "starting server with server.start_command"
+    );
+    let status = Command::new("sh")
+        .arg("-c")
+        .arg(start_command)
+        .env("HERDR_SESSION_NAME", session_name)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map_err(|err| {
+            io::Error::new(
+                err.kind(),
+                format!("failed to run server.start_command `{start_command}`: {err}"),
+            )
+        })?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(io::Error::other(format!(
+            "server.start_command `{start_command}` failed: {status}"
+        )))
+    }
 }
 
 fn build_server_daemon_command(exe: PathBuf) -> Command {
@@ -427,6 +461,26 @@ mod tests {
             .unwrap()
             .as_nanos();
         std::path::PathBuf::from(format!("/tmp/ha-{name}-{}-{nanos}", std::process::id()))
+    }
+
+    #[test]
+    fn server_start_command_runs_with_the_session_name() {
+        let dir = unique_test_dir("start-command");
+        std::fs::create_dir_all(&dir).unwrap();
+        let marker = dir.join("started");
+        let start_command = format!("printf %s \"$HERDR_SESSION_NAME\" > {}", marker.display());
+
+        run_server_start_command(&start_command, "work").unwrap();
+
+        assert_eq!(std::fs::read_to_string(&marker).unwrap(), "work");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn failed_server_start_command_is_an_error() {
+        let error = run_server_start_command("exit 3", "default").unwrap_err();
+
+        assert!(error.to_string().contains("server.start_command"));
     }
 
     #[test]
