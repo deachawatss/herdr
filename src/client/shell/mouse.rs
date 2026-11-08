@@ -675,15 +675,10 @@ impl ClientShellState {
         if !shares_its_workspace {
             return None;
         }
-        let folder_name = source_pane.cwd.as_deref().and_then(|cwd| {
-            std::path::Path::new(cwd)
-                .file_name()
-                .map(|name| name.to_string_lossy().into_owned())
-        });
         let method = Method::PaneMove(PaneMoveParams {
             pane_id: source_pane.pane_id.clone(),
             destination: PaneMoveDestination::NewWorkspace {
-                label: folder_name,
+                label: self.pane_name(source_pane_id),
                 tab_label: None,
             },
             focus: true,
@@ -1422,7 +1417,7 @@ impl ClientShellState {
                         if let Some(method) =
                             self.workspace_pane_drop_method(&source_workspace_id, point)
                         {
-                            self.push_endpoint_method(method, outcome);
+                            self.push_pane_move(method, outcome);
                         } else if let Some((before_workspace_id, _)) = target {
                             if let Some(method) = self.workspace_move_method(
                                 &source_workspace_id,
@@ -1438,7 +1433,7 @@ impl ClientShellState {
                             .pane_drop_method(&pane_id, point)
                             .or_else(|| self.pane_to_new_workspace_drop_method(&pane_id, point))
                         {
-                            self.push_endpoint_method(method, outcome);
+                            self.push_pane_move(method, outcome);
                         }
                         outcome.repaint = true;
                     }

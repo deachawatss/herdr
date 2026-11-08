@@ -455,7 +455,7 @@ impl ClientShellState {
             ),
             ClientContextMenuAction::MoveToNewWorkspace => {
                 if let Some(method) = self.pane_to_new_workspace_method(&pane_id) {
-                    self.push_endpoint_method(method, outcome);
+                    self.push_pane_move(method, outcome);
                 }
             }
             ClientContextMenuAction::ClosePane => self.request_pane_close(pane_id, outcome),
