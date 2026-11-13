@@ -217,43 +217,104 @@ fn image_bridge_follows_the_selected_remote_endpoint() {
 #[cfg(unix)]
 #[test]
 fn clipboard_image_paste_bridge_triggers_on_configured_key_and_empty_paste() {
+    use super::clipboard_images::ImagePasteTrigger::{EmptyPaste, PasteKey};
     let ctrl_v = crate::config::parse_key_combo("ctrl+v").unwrap();
-    assert!(should_bridge_clipboard_image_paste(
-        &[0x16],
-        true,
-        Some(ctrl_v)
-    ));
-    assert!(should_bridge_clipboard_image_paste(
-        b"\x1b[118;5u",
-        true,
-        Some(ctrl_v)
-    ));
-    assert!(should_bridge_clipboard_image_paste(
-        b"\x1b[200~\x1b[201~",
-        true,
+    assert_eq!(
+        clipboard_image_paste_trigger(&[0x16], true, Some(ctrl_v)),
+        Some(PasteKey)
+    );
+    assert_eq!(
+        clipboard_image_paste_trigger(b"\x1b[118;5u", true, Some(ctrl_v)),
+        Some(PasteKey)
+    );
+    assert_eq!(
+        clipboard_image_paste_trigger(b"\x1b[200~\x1b[201~", true, None),
+        Some(EmptyPaste)
+    );
+    assert_eq!(
+        clipboard_image_paste_trigger(b"\x1b[200~\x1b[201~", false, Some(ctrl_v)),
         None
+    );
+    assert_eq!(
+        clipboard_image_paste_trigger(&[0x16], false, Some(ctrl_v)),
+        None
+    );
+    assert_eq!(
+        clipboard_image_paste_trigger(b"\x1b[200~text\x1b[201~", true, Some(ctrl_v)),
+        None
+    );
+    assert_eq!(clipboard_image_paste_trigger(&[0x16], true, None), None);
+    assert_eq!(
+        clipboard_image_paste_trigger(b"v", true, Some(ctrl_v)),
+        None
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn an_empty_windows_paste_event_is_the_empty_paste_trigger() {
+    use super::clipboard_images::ImagePasteTrigger::EmptyPaste;
+    let empty = [crate::protocol::ClientInputEvent::Paste {
+        text: String::new(),
+    }];
+    let text = [crate::protocol::ClientInputEvent::Paste {
+        text: "text".to_owned(),
+    }];
+    assert_eq!(
+        clipboard_image_paste_trigger_from_events(&empty, true, None),
+        Some(EmptyPaste)
+    );
+    assert_eq!(
+        clipboard_image_paste_trigger_from_events(&empty, false, None),
+        None
+    );
+    assert_eq!(
+        clipboard_image_paste_trigger_from_events(&text, true, None),
+        None
+    );
+}
+
+fn png_image() -> crate::platform::ClipboardImage {
+    crate::platform::ClipboardImage {
+        bytes: b"\x89PNG\r\n\x1a\n".to_vec(),
+        extension: "png",
+    }
+}
+
+#[test]
+fn an_empty_remote_paste_with_no_local_image_is_dropped() {
+    use super::clipboard_images::ImagePasteTrigger::EmptyPaste;
+    assert!(matches!(
+        route_remote_paste(Some(EmptyPaste), || None),
+        RemotePaste::Drop
     ));
-    assert!(!should_bridge_clipboard_image_paste(
-        b"\x1b[200~\x1b[201~",
-        false,
-        Some(ctrl_v)
+}
+
+#[test]
+fn a_paste_key_with_no_local_image_reaches_the_pane() {
+    use super::clipboard_images::ImagePasteTrigger::PasteKey;
+    assert!(matches!(
+        route_remote_paste(Some(PasteKey), || None),
+        RemotePaste::PassThrough
     ));
-    assert!(!should_bridge_clipboard_image_paste(
-        &[0x16],
-        false,
-        Some(ctrl_v)
-    ));
-    assert!(!should_bridge_clipboard_image_paste(
-        b"\x1b[200~text\x1b[201~",
-        true,
-        Some(ctrl_v)
-    ));
-    assert!(!should_bridge_clipboard_image_paste(&[0x16], true, None));
-    assert!(!should_bridge_clipboard_image_paste(
-        b"v",
-        true,
-        Some(ctrl_v)
-    ));
+}
+
+#[test]
+fn a_remote_paste_with_a_local_image_bridges_that_image() {
+    use super::clipboard_images::ImagePasteTrigger::{EmptyPaste, PasteKey};
+    for trigger in [EmptyPaste, PasteKey] {
+        let RemotePaste::Image(image) = route_remote_paste(Some(trigger), || Some(png_image()))
+        else {
+            panic!("{trigger:?} with a local image must bridge it");
+        };
+        assert_eq!(image.bytes, b"\x89PNG\r\n\x1a\n");
+    }
+}
+
+#[test]
+fn input_that_is_not_an_image_paste_never_reads_the_local_clipboard() {
+    let route = route_remote_paste(None, || panic!("the local clipboard must not be read"));
+    assert!(matches!(route, RemotePaste::PassThrough));
 }
 
 #[cfg(unix)]

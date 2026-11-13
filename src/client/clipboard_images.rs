@@ -62,22 +62,53 @@ pub(super) fn endpoint_accepts_local_images(
     active_surface_available && (remote_client_process || !endpoint_id.is_local())
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ImagePasteTrigger {
+    EmptyPaste,
+    PasteKey,
+}
+
+#[derive(Debug)]
+pub(super) enum RemotePaste {
+    Image(crate::platform::ClipboardImage),
+    Drop,
+    PassThrough,
+}
+
+pub(super) fn route_remote_paste(
+    trigger: Option<ImagePasteTrigger>,
+    read_local_image: impl FnOnce() -> Option<crate::platform::ClipboardImage>,
+) -> RemotePaste {
+    let Some(trigger) = trigger else {
+        return RemotePaste::PassThrough;
+    };
+    if let Some(image) = read_local_image() {
+        return RemotePaste::Image(image);
+    }
+    info!(
+        ?trigger,
+        "clipboard image paste trigger received, but local clipboard has no image"
+    );
+    match trigger {
+        ImagePasteTrigger::EmptyPaste => RemotePaste::Drop,
+        ImagePasteTrigger::PasteKey => RemotePaste::PassThrough,
+    }
+}
+
 #[cfg(unix)]
-pub(super) fn should_bridge_clipboard_image_paste(
+pub(super) fn clipboard_image_paste_trigger(
     data: &[u8],
     is_remote_client: bool,
     remote_image_paste_key: Option<(crossterm::event::KeyCode, crossterm::event::KeyModifiers)>,
-) -> bool {
+) -> Option<ImagePasteTrigger> {
     if !is_remote_client {
-        return false;
+        return None;
     }
     if data == b"\x1b[200~\x1b[201~" {
-        return true;
+        return Some(ImagePasteTrigger::EmptyPaste);
     }
 
-    let Some(remote_image_paste_key) = remote_image_paste_key else {
-        return false;
-    };
+    let remote_image_paste_key = remote_image_paste_key?;
 
     let events = crate::raw_input::parse_framed_input(data);
     matches!(
@@ -86,24 +117,23 @@ pub(super) fn should_bridge_clipboard_image_paste(
             if key.kind == crossterm::event::KeyEventKind::Press
                 && crate::config::terminal_key_matches_combo(key, remote_image_paste_key)
     )
+    .then_some(ImagePasteTrigger::PasteKey)
 }
 
 #[cfg(windows)]
-pub(super) fn should_bridge_clipboard_image_events(
+pub(super) fn clipboard_image_paste_trigger_from_events(
     events: &[ClientInputEvent],
     is_remote_client: bool,
     remote_image_paste_key: Option<(crossterm::event::KeyCode, crossterm::event::KeyModifiers)>,
-) -> bool {
+) -> Option<ImagePasteTrigger> {
     if !is_remote_client {
-        return false;
+        return None;
     }
     if matches!(events, [ClientInputEvent::Paste { text }] if text.is_empty()) {
-        return true;
+        return Some(ImagePasteTrigger::EmptyPaste);
     }
 
-    let Some(remote_image_paste_key) = remote_image_paste_key else {
-        return false;
-    };
+    let remote_image_paste_key = remote_image_paste_key?;
     matches!(
         events,
         [event]
@@ -117,6 +147,7 @@ pub(super) fn should_bridge_clipboard_image_events(
                         )
             )
     )
+    .then_some(ImagePasteTrigger::PasteKey)
 }
 
 #[cfg(unix)]
