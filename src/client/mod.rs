@@ -114,12 +114,15 @@ use attach::AttachEscapeState;
 #[cfg(unix)]
 use attach::{write_attach_semantic_action, AttachInputAction};
 use clipboard_images::{
-    client_remote_image_paste_key, endpoint_accepts_local_images, write_remote_image_to_server,
+    client_remote_image_paste_key, endpoint_accepts_local_images, route_remote_paste,
+    write_remote_image_to_server, RemotePaste,
 };
-#[cfg(windows)]
-use clipboard_images::{read_image_file_from_client_events, should_bridge_clipboard_image_events};
 #[cfg(unix)]
-use clipboard_images::{read_image_file_from_terminal_drop, should_bridge_clipboard_image_paste};
+use clipboard_images::{clipboard_image_paste_trigger, read_image_file_from_terminal_drop};
+#[cfg(windows)]
+use clipboard_images::{
+    clipboard_image_paste_trigger_from_events, read_image_file_from_client_events,
+};
 pub use errors::ClientError;
 #[cfg(test)]
 use frame_output::{clear_received_kitty_graphics, kitty_graphics_image_ids};
@@ -845,12 +848,15 @@ async fn run_client_loop(
                         .as_ref()
                         .and_then(|shell| shell.clipboard_image_target());
                     if let Some(target) = image_target.clone() {
-                        if should_bridge_clipboard_image_paste(
-                            &data,
-                            image_bridge_active,
-                            state.remote_image_paste_key,
+                        match route_remote_paste(
+                            clipboard_image_paste_trigger(
+                                &data,
+                                image_bridge_active,
+                                state.remote_image_paste_key,
+                            ),
+                            crate::platform::read_clipboard_image,
                         ) {
-                            if let Some(image) = crate::platform::read_clipboard_image() {
+                            RemotePaste::Image(image) => {
                                 write_remote_image_to_server(
                                     &mut write_stream,
                                     target,
@@ -859,9 +865,8 @@ async fn run_client_loop(
                                 )?;
                                 continue;
                             }
-                            info!(
-                                "clipboard image paste trigger received, but local clipboard has no image"
-                            );
+                            RemotePaste::Drop => continue,
+                            RemotePaste::PassThrough => {}
                         }
                         if let Some(image) =
                             read_image_file_from_terminal_drop(&data, image_bridge_active)
@@ -973,12 +978,15 @@ async fn run_client_loop(
                     }
                     data
                 };
-                if should_bridge_clipboard_image_paste(
-                    &data,
-                    image_bridge_active,
-                    state.remote_image_paste_key,
+                match route_remote_paste(
+                    clipboard_image_paste_trigger(
+                        &data,
+                        image_bridge_active,
+                        state.remote_image_paste_key,
+                    ),
+                    crate::platform::read_clipboard_image,
                 ) {
-                    if let Some(image) = crate::platform::read_clipboard_image() {
+                    RemotePaste::Image(image) => {
                         write_remote_image_to_server(
                             &mut write_stream,
                             crate::protocol::ClientClipboardImageTarget::DirectTerminal,
@@ -987,9 +995,8 @@ async fn run_client_loop(
                         )?;
                         continue;
                     }
-                    info!(
-                        "clipboard image paste trigger received, but local clipboard has no image"
-                    );
+                    RemotePaste::Drop => continue,
+                    RemotePaste::PassThrough => {}
                 }
                 if let Some(image) = read_image_file_from_terminal_drop(&data, image_bridge_active)
                 {
@@ -1158,12 +1165,15 @@ async fn run_client_loop(
                         .as_ref()
                         .and_then(|shell| shell.clipboard_image_target());
                     if let Some(target) = image_target.clone() {
-                        if should_bridge_clipboard_image_events(
-                            &events,
-                            image_bridge_active,
-                            state.remote_image_paste_key,
+                        match route_remote_paste(
+                            clipboard_image_paste_trigger_from_events(
+                                &events,
+                                image_bridge_active,
+                                state.remote_image_paste_key,
+                            ),
+                            crate::platform::read_clipboard_image,
                         ) {
-                            if let Some(image) = crate::platform::read_clipboard_image() {
+                            RemotePaste::Image(image) => {
                                 write_remote_image_to_server(
                                     &mut write_stream,
                                     target,
@@ -1172,9 +1182,8 @@ async fn run_client_loop(
                                 )?;
                                 continue;
                             }
-                            info!(
-                                "clipboard image paste trigger received, but local clipboard has no image"
-                            );
+                            RemotePaste::Drop => continue,
+                            RemotePaste::PassThrough => {}
                         }
                         if let Some(image) =
                             read_image_file_from_client_events(&events, image_bridge_active)

@@ -2145,14 +2145,15 @@ mod tests {
             };
             assert_eq!(events.len(), 1, "logical input batches must stay separate");
             shortcut_preserved |=
-                crate::client::clipboard_images::should_bridge_clipboard_image_events(
+                crate::client::clipboard_images::clipboard_image_paste_trigger_from_events(
                     &events,
                     true,
                     Some((
                         crossterm::event::KeyCode::Char('v'),
                         crossterm::event::KeyModifiers::CONTROL,
                     )),
-                );
+                )
+                .is_some();
             delivered.extend(events);
         }
         assert_eq!(delivered, expected);
