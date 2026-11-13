@@ -250,6 +250,30 @@ fn clipboard_image_paste_bridge_triggers_on_configured_key_and_empty_paste() {
     );
 }
 
+#[cfg(windows)]
+#[test]
+fn an_empty_windows_paste_event_is_the_empty_paste_trigger() {
+    use super::clipboard_images::ImagePasteTrigger::EmptyPaste;
+    let empty = [crate::protocol::ClientInputEvent::Paste {
+        text: String::new(),
+    }];
+    let text = [crate::protocol::ClientInputEvent::Paste {
+        text: "text".to_owned(),
+    }];
+    assert_eq!(
+        clipboard_image_paste_trigger_from_events(&empty, true, None),
+        Some(EmptyPaste)
+    );
+    assert_eq!(
+        clipboard_image_paste_trigger_from_events(&empty, false, None),
+        None
+    );
+    assert_eq!(
+        clipboard_image_paste_trigger_from_events(&text, true, None),
+        None
+    );
+}
+
 fn png_image() -> crate::platform::ClipboardImage {
     crate::platform::ClipboardImage {
         bytes: b"\x89PNG\r\n\x1a\n".to_vec(),

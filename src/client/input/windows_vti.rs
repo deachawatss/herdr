@@ -2152,8 +2152,7 @@ mod tests {
                         crossterm::event::KeyCode::Char('v'),
                         crossterm::event::KeyModifiers::CONTROL,
                     )),
-                )
-                .is_some();
+                ) == Some(crate::client::clipboard_images::ImagePasteTrigger::PasteKey);
             delivered.extend(events);
         }
         assert_eq!(delivered, expected);
