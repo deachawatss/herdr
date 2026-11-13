@@ -695,93 +695,45 @@ pub fn open_url(url: &str) -> std::io::Result<Option<std::process::Child>> {
         .map(Some)
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ClipboardImageFormat {
-    Png,
-    Jpeg,
-}
-
-impl ClipboardImageFormat {
-    fn applescript_class(self) -> &'static str {
-        match self {
-            Self::Png => "PNGf",
-            Self::Jpeg => "JPEG",
-        }
-    }
-
-    fn extension(self) -> &'static str {
-        match self {
-            Self::Png => "png",
-            Self::Jpeg => "jpg",
-        }
-    }
-}
-
-#[derive(Debug)]
-enum ClipboardImageRead {
-    Unavailable,
-    Complete(Vec<u8>),
-    Oversized,
-}
-
 pub fn read_clipboard_image() -> Option<ClipboardImage> {
-    pick_clipboard_image(read_clipboard_image_as)
-}
-
-fn pick_clipboard_image(
-    mut read_as: impl FnMut(ClipboardImageFormat) -> ClipboardImageRead,
-) -> Option<ClipboardImage> {
-    for format in [ClipboardImageFormat::Png, ClipboardImageFormat::Jpeg] {
-        match read_as(format) {
-            ClipboardImageRead::Complete(bytes) => {
-                return Some(ClipboardImage {
-                    bytes,
-                    extension: format.extension(),
-                })
-            }
-            ClipboardImageRead::Unavailable => return None,
-            ClipboardImageRead::Oversized => {}
-        }
-    }
-    tracing::warn!("clipboard image is too large to bridge as PNG or JPEG");
-    None
-}
-
-fn read_clipboard_image_as(format: ClipboardImageFormat) -> ClipboardImageRead {
     let path = std::env::temp_dir().join(format!(
-        "herdr-clipboard-image-{}-{}.{}",
+        "herdr-clipboard-image-{}-{}.png",
         std::process::id(),
-        unique_timestamp_nanos(),
-        format.extension()
+        unique_timestamp_nanos()
     ));
     let script = format!(
-        "set image_data to (the clipboard as «class {}»)\nset fp to open for access POSIX file \"{}\" with write permission\nwrite image_data to fp\nclose access fp",
-        format.applescript_class(),
+        "set png_data to (the clipboard as «class PNGf»)\nset fp to open for access POSIX file \"{}\" with write permission\nwrite png_data to fp\nclose access fp",
         path.display()
     );
 
-    let succeeded = Command::new("osascript")
+    let status = Command::new("osascript")
         .arg("-e")
         .arg(script)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
-        .is_ok_and(|status| status.success());
+        .ok()?;
 
-    let read = if succeeded {
-        match std::fs::File::open(&path).ok().and_then(|file| {
-            read_limited_reader(file, crate::protocol::MAX_CLIPBOARD_IMAGE_PAYLOAD).ok()
-        }) {
-            Some(LimitedRead::Complete(bytes)) => ClipboardImageRead::Complete(bytes),
-            Some(LimitedRead::Oversized) => ClipboardImageRead::Oversized,
-            Some(LimitedRead::Empty) | None => ClipboardImageRead::Unavailable,
+    if !status.success() {
+        let _ = std::fs::remove_file(&path);
+        return None;
+    }
+
+    let bytes = match std::fs::File::open(&path).ok().and_then(|file| {
+        read_limited_reader(file, crate::protocol::MAX_CLIPBOARD_IMAGE_PAYLOAD).ok()
+    }) {
+        Some(LimitedRead::Complete(bytes)) => bytes,
+        Some(LimitedRead::Empty | LimitedRead::Oversized) | None => {
+            let _ = std::fs::remove_file(&path);
+            return None;
         }
-    } else {
-        ClipboardImageRead::Unavailable
     };
     let _ = std::fs::remove_file(&path);
-    read
+    Some(ClipboardImage {
+        bytes,
+        extension: "png",
+    })
 }
 
 fn unique_timestamp_nanos() -> u128 {
@@ -1252,76 +1204,6 @@ pub fn process_exists(pid: u32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn reader(
-        png: fn() -> ClipboardImageRead,
-        jpeg: fn() -> ClipboardImageRead,
-        asked: &mut Vec<ClipboardImageFormat>,
-    ) -> impl FnMut(ClipboardImageFormat) -> ClipboardImageRead + '_ {
-        move |format| {
-            asked.push(format);
-            match format {
-                ClipboardImageFormat::Png => png(),
-                ClipboardImageFormat::Jpeg => jpeg(),
-            }
-        }
-    }
-
-    #[test]
-    fn a_clipboard_image_that_fits_as_png_is_sent_as_png() {
-        let mut asked = Vec::new();
-        let image = pick_clipboard_image(reader(
-            || ClipboardImageRead::Complete(b"png".to_vec()),
-            || ClipboardImageRead::Complete(b"jpeg".to_vec()),
-            &mut asked,
-        ))
-        .expect("an image");
-        assert_eq!((image.bytes, image.extension), (b"png".to_vec(), "png"));
-        assert_eq!(asked, [ClipboardImageFormat::Png]);
-    }
-
-    #[test]
-    fn a_clipboard_image_too_large_as_png_is_sent_as_jpeg() {
-        let mut asked = Vec::new();
-        let image = pick_clipboard_image(reader(
-            || ClipboardImageRead::Oversized,
-            || ClipboardImageRead::Complete(b"jpeg".to_vec()),
-            &mut asked,
-        ))
-        .expect("an image");
-        assert_eq!((image.bytes, image.extension), (b"jpeg".to_vec(), "jpg"));
-        assert_eq!(
-            asked,
-            [ClipboardImageFormat::Png, ClipboardImageFormat::Jpeg]
-        );
-    }
-
-    #[test]
-    fn a_clipboard_image_too_large_as_png_and_jpeg_is_not_sent() {
-        let mut asked = Vec::new();
-        let image = pick_clipboard_image(reader(
-            || ClipboardImageRead::Oversized,
-            || ClipboardImageRead::Oversized,
-            &mut asked,
-        ));
-        assert!(image.is_none());
-        assert_eq!(
-            asked,
-            [ClipboardImageFormat::Png, ClipboardImageFormat::Jpeg]
-        );
-    }
-
-    #[test]
-    fn a_clipboard_with_no_image_is_not_read_again_as_jpeg() {
-        let mut asked = Vec::new();
-        let image = pick_clipboard_image(reader(
-            || ClipboardImageRead::Unavailable,
-            || ClipboardImageRead::Complete(b"jpeg".to_vec()),
-            &mut asked,
-        ));
-        assert!(image.is_none());
-        assert_eq!(asked, [ClipboardImageFormat::Png]);
-    }
 
     #[test]
     fn nofile_target_raises_low_soft_limit_to_cap_when_hard_is_unlimited() {

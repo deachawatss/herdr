@@ -87,7 +87,7 @@ pub(super) fn route_remote_paste(
     }
     info!(
         ?trigger,
-        "clipboard image paste trigger received, but no local clipboard image was bridged"
+        "clipboard image paste trigger received, but local clipboard has no image"
     );
     match trigger {
         ImagePasteTrigger::EmptyPaste => RemotePaste::Drop,
