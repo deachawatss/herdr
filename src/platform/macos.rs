@@ -719,7 +719,7 @@ impl ClipboardImageFormat {
 
 #[derive(Debug)]
 enum ClipboardImageRead {
-    Missing,
+    Unavailable,
     Complete(Vec<u8>),
     Oversized,
 }
@@ -739,7 +739,7 @@ fn pick_clipboard_image(
                     extension: format.extension(),
                 })
             }
-            ClipboardImageRead::Missing => return None,
+            ClipboardImageRead::Unavailable => return None,
             ClipboardImageRead::Oversized => {}
         }
     }
@@ -775,10 +775,10 @@ fn read_clipboard_image_as(format: ClipboardImageFormat) -> ClipboardImageRead {
         }) {
             Some(LimitedRead::Complete(bytes)) => ClipboardImageRead::Complete(bytes),
             Some(LimitedRead::Oversized) => ClipboardImageRead::Oversized,
-            Some(LimitedRead::Empty) | None => ClipboardImageRead::Missing,
+            Some(LimitedRead::Empty) | None => ClipboardImageRead::Unavailable,
         }
     } else {
-        ClipboardImageRead::Missing
+        ClipboardImageRead::Unavailable
     };
     let _ = std::fs::remove_file(&path);
     read
@@ -1290,6 +1290,10 @@ mod tests {
         ))
         .expect("an image");
         assert_eq!((image.bytes, image.extension), (b"jpeg".to_vec(), "jpg"));
+        assert_eq!(
+            asked,
+            [ClipboardImageFormat::Png, ClipboardImageFormat::Jpeg]
+        );
     }
 
     #[test]
@@ -1311,7 +1315,7 @@ mod tests {
     fn a_clipboard_with_no_image_is_not_read_again_as_jpeg() {
         let mut asked = Vec::new();
         let image = pick_clipboard_image(reader(
-            || ClipboardImageRead::Missing,
+            || ClipboardImageRead::Unavailable,
             || ClipboardImageRead::Complete(b"jpeg".to_vec()),
             &mut asked,
         ));
