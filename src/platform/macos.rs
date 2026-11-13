@@ -695,45 +695,174 @@ pub fn open_url(url: &str) -> std::io::Result<Option<std::process::Child>> {
         .map(Some)
 }
 
+const BRIDGED_IMAGE_MAX_EDGE: u32 = 2048;
+
+const PASTEBOARD_IMAGE_TYPES: [(&str, ClipboardImageKind); 4] = [
+    ("public.heic", ClipboardImageKind::NeedsJpeg),
+    ("public.jpeg", ClipboardImageKind::Jpeg),
+    ("public.png", ClipboardImageKind::Png),
+    ("public.tiff", ClipboardImageKind::NeedsJpeg),
+];
+
+const SAVE_NATIVE_CLIPBOARD_IMAGE: &str = "function run(argv) {
+  ObjC.import('AppKit');
+  const pasteboard = $.NSPasteboard.generalPasteboard;
+  for (const type of argv.slice(1)) {
+    const data = pasteboard.dataForType(type);
+    if (!data.isNil() && data.writeToFileAtomically(argv[0], true)) return type;
+  }
+  return '';
+}";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ClipboardImageKind {
+    Png,
+    Jpeg,
+    NeedsJpeg,
+}
+
+impl ClipboardImageKind {
+    fn from_pasteboard_type(pasteboard_type: &str) -> Option<Self> {
+        PASTEBOARD_IMAGE_TYPES
+            .iter()
+            .find(|(name, _)| *name == pasteboard_type)
+            .map(|(_, kind)| *kind)
+    }
+
+    fn extension_sent_as_is(self) -> Option<&'static str> {
+        match self {
+            Self::Png => Some("png"),
+            Self::Jpeg => Some("jpg"),
+            Self::NeedsJpeg => None,
+        }
+    }
+}
+
 pub fn read_clipboard_image() -> Option<ClipboardImage> {
-    let path = std::env::temp_dir().join(format!(
-        "herdr-clipboard-image-{}-{}.png",
+    let saved = herdr_temp_path("clipboard-native");
+    let image = match save_native_clipboard_image(&saved) {
+        Some(kind) => image_to_send(kind, &saved, convert_to_jpeg),
+        None => read_clipboard_image_as_png(),
+    };
+    let _ = std::fs::remove_file(&saved);
+    image
+}
+
+fn image_to_send(
+    kind: ClipboardImageKind,
+    saved: &Path,
+    convert_to_jpeg: impl FnOnce(&Path) -> Option<Vec<u8>>,
+) -> Option<ClipboardImage> {
+    if let Some(extension) = kind.extension_sent_as_is() {
+        if let Some(LimitedRead::Complete(bytes)) = read_limited_file(saved) {
+            return Some(ClipboardImage { bytes, extension });
+        }
+    }
+    convert_to_jpeg(saved).map(|bytes| ClipboardImage {
+        bytes,
+        extension: "jpg",
+    })
+}
+
+fn jpeg_resize_edge(width: u32, height: u32) -> Option<u32> {
+    (width.max(height) > BRIDGED_IMAGE_MAX_EDGE).then_some(BRIDGED_IMAGE_MAX_EDGE)
+}
+
+fn save_native_clipboard_image(saved: &Path) -> Option<ClipboardImageKind> {
+    let output = Command::new("osascript")
+        .args(["-l", "JavaScript", "-e", SAVE_NATIVE_CLIPBOARD_IMAGE])
+        .arg(saved)
+        .args(PASTEBOARD_IMAGE_TYPES.iter().map(|(name, _)| *name))
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    ClipboardImageKind::from_pasteboard_type(String::from_utf8_lossy(&output.stdout).trim())
+}
+
+fn convert_to_jpeg(source: &Path) -> Option<Vec<u8>> {
+    let size = Command::new("sips")
+        .args(["-g", "pixelWidth", "-g", "pixelHeight"])
+        .arg(source)
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+    let (width, height) = parse_pixel_size(&String::from_utf8_lossy(&size.stdout))?;
+
+    let converted = herdr_temp_path("clipboard-jpeg");
+    let mut sips = Command::new("sips");
+    sips.args(["-s", "format", "jpeg"]);
+    if let Some(edge) = jpeg_resize_edge(width, height) {
+        sips.arg("-Z").arg(edge.to_string());
+    }
+    let succeeded = sips
+        .arg(source)
+        .arg("--out")
+        .arg(&converted)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success());
+    let bytes = match succeeded.then(|| read_limited_file(&converted)).flatten() {
+        Some(LimitedRead::Complete(bytes)) => Some(bytes),
+        _ => None,
+    };
+    let _ = std::fs::remove_file(&converted);
+    bytes
+}
+
+fn parse_pixel_size(sips_output: &str) -> Option<(u32, u32)> {
+    let pixels = |key: &str| {
+        sips_output
+            .lines()
+            .find_map(|line| line.trim().strip_prefix(key)?.trim().parse::<u32>().ok())
+    };
+    Some((pixels("pixelWidth:")?, pixels("pixelHeight:")?))
+}
+
+fn read_limited_file(path: &Path) -> Option<LimitedRead> {
+    std::fs::File::open(path).ok().and_then(|file| {
+        read_limited_reader(file, crate::protocol::MAX_CLIPBOARD_IMAGE_PAYLOAD).ok()
+    })
+}
+
+fn herdr_temp_path(purpose: &str) -> PathBuf {
+    std::env::temp_dir().join(format!(
+        "herdr-{purpose}-{}-{}",
         std::process::id(),
         unique_timestamp_nanos()
-    ));
+    ))
+}
+
+fn read_clipboard_image_as_png() -> Option<ClipboardImage> {
+    let path = herdr_temp_path("clipboard-png");
     let script = format!(
         "set png_data to (the clipboard as «class PNGf»)\nset fp to open for access POSIX file \"{}\" with write permission\nwrite png_data to fp\nclose access fp",
         path.display()
     );
 
-    let status = Command::new("osascript")
+    let succeeded = Command::new("osascript")
         .arg("-e")
         .arg(script)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
-        .ok()?;
-
-    if !status.success() {
-        let _ = std::fs::remove_file(&path);
-        return None;
-    }
-
-    let bytes = match std::fs::File::open(&path).ok().and_then(|file| {
-        read_limited_reader(file, crate::protocol::MAX_CLIPBOARD_IMAGE_PAYLOAD).ok()
-    }) {
-        Some(LimitedRead::Complete(bytes)) => bytes,
-        Some(LimitedRead::Empty | LimitedRead::Oversized) | None => {
-            let _ = std::fs::remove_file(&path);
-            return None;
-        }
+        .is_ok_and(|status| status.success());
+    let image = match succeeded.then(|| read_limited_file(&path)).flatten() {
+        Some(LimitedRead::Complete(bytes)) => Some(ClipboardImage {
+            bytes,
+            extension: "png",
+        }),
+        _ => None,
     };
     let _ = std::fs::remove_file(&path);
-    Some(ClipboardImage {
-        bytes,
-        extension: "png",
-    })
+    image
 }
 
 fn unique_timestamp_nanos() -> u128 {
@@ -1204,6 +1333,132 @@ pub fn process_exists(pid: u32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct SavedImage(PathBuf);
+
+    impl SavedImage {
+        fn holding(bytes: &[u8]) -> Self {
+            let path = herdr_temp_path("clipboard-test");
+            std::fs::write(&path, bytes).expect("write the saved image");
+            Self(path)
+        }
+    }
+
+    impl Drop for SavedImage {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+
+    fn no_conversion(_: &Path) -> Option<Vec<u8>> {
+        panic!("an image that fits in its own format must not be converted")
+    }
+
+    #[test]
+    fn a_clipboard_png_is_sent_as_it_is() {
+        let saved = SavedImage::holding(b"png bytes");
+        let image =
+            image_to_send(ClipboardImageKind::Png, &saved.0, no_conversion).expect("an image");
+        assert_eq!(
+            (image.bytes, image.extension),
+            (b"png bytes".to_vec(), "png")
+        );
+    }
+
+    #[test]
+    fn a_clipboard_jpeg_is_sent_as_it_is() {
+        let saved = SavedImage::holding(b"jpeg bytes");
+        let image =
+            image_to_send(ClipboardImageKind::Jpeg, &saved.0, no_conversion).expect("an image");
+        assert_eq!(
+            (image.bytes, image.extension),
+            (b"jpeg bytes".to_vec(), "jpg")
+        );
+    }
+
+    #[test]
+    fn a_clipboard_heic_is_sent_as_a_jpeg_made_from_the_saved_copy() {
+        let saved = SavedImage::holding(b"heic bytes");
+        let mut converted_from = None;
+        let image = image_to_send(ClipboardImageKind::NeedsJpeg, &saved.0, |source| {
+            converted_from = Some(source.to_path_buf());
+            Some(b"jpeg bytes".to_vec())
+        })
+        .expect("an image");
+        assert_eq!(
+            (image.bytes, image.extension),
+            (b"jpeg bytes".to_vec(), "jpg")
+        );
+        assert_eq!(converted_from.as_deref(), Some(saved.0.as_path()));
+    }
+
+    #[test]
+    fn a_clipboard_png_over_the_payload_limit_is_sent_as_a_jpeg() {
+        let saved = SavedImage::holding(&vec![0; crate::protocol::MAX_CLIPBOARD_IMAGE_PAYLOAD + 1]);
+        let image = image_to_send(ClipboardImageKind::Png, &saved.0, |_| {
+            Some(b"jpeg bytes".to_vec())
+        })
+        .expect("an image");
+        assert_eq!(
+            (image.bytes, image.extension),
+            (b"jpeg bytes".to_vec(), "jpg")
+        );
+    }
+
+    #[test]
+    fn a_failed_jpeg_conversion_sends_nothing() {
+        let saved = SavedImage::holding(b"heic bytes");
+        assert!(image_to_send(ClipboardImageKind::NeedsJpeg, &saved.0, |_| None).is_none());
+    }
+
+    #[test]
+    fn only_an_image_larger_than_2048_pixels_is_shrunk() {
+        assert_eq!(jpeg_resize_edge(5712, 4284), Some(2048));
+        assert_eq!(jpeg_resize_edge(1170, 2532), Some(2048));
+        assert_eq!(jpeg_resize_edge(2048, 1536), None);
+        assert_eq!(jpeg_resize_edge(300, 200), None);
+    }
+
+    #[test]
+    fn the_pixel_size_is_read_from_sips_output() {
+        let output = "/tmp/herdr-clipboard-native-1-2\n  pixelWidth: 5712\n  pixelHeight: 4284\n";
+        assert_eq!(parse_pixel_size(output), Some((5712, 4284)));
+        assert_eq!(parse_pixel_size("/tmp/x\n  pixelWidth: 5712\n"), None);
+        assert_eq!(parse_pixel_size("Error: unable to open\n"), None);
+    }
+
+    #[test]
+    fn the_original_heic_is_preferred_over_a_converted_png() {
+        let order: Vec<&str> = PASTEBOARD_IMAGE_TYPES
+            .iter()
+            .map(|(name, _)| *name)
+            .collect();
+        assert_eq!(
+            order,
+            ["public.heic", "public.jpeg", "public.png", "public.tiff"]
+        );
+    }
+
+    #[test]
+    fn pasteboard_image_types_map_to_how_they_are_sent() {
+        assert_eq!(
+            ClipboardImageKind::from_pasteboard_type("public.png"),
+            Some(ClipboardImageKind::Png)
+        );
+        assert_eq!(
+            ClipboardImageKind::from_pasteboard_type("public.jpeg"),
+            Some(ClipboardImageKind::Jpeg)
+        );
+        assert_eq!(
+            ClipboardImageKind::from_pasteboard_type("public.heic"),
+            Some(ClipboardImageKind::NeedsJpeg)
+        );
+        assert_eq!(
+            ClipboardImageKind::from_pasteboard_type("public.tiff"),
+            Some(ClipboardImageKind::NeedsJpeg)
+        );
+        assert_eq!(ClipboardImageKind::from_pasteboard_type(""), None);
+    }
 
     #[test]
     fn nofile_target_raises_low_soft_limit_to_cap_when_hard_is_unlimited() {
